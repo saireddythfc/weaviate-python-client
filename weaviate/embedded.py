@@ -296,40 +296,79 @@ EmbeddedDB = EmbeddedV3  # needed for BC from v3 -> v4
 
 class EmbeddedV4(_EmbeddedBase):
     def is_listening(self) -> bool:
-        up = self.__is_listening()
-        return up[0] and up[1]
+        """Check if both HTTP and gRPC ports are listening."""
+        http_listening, grpc_listening = self.__is_listening()
+        return http_listening and grpc_listening
 
     def __is_listening(self) -> Tuple[bool, bool]:
-        http_listening, grpc_listening = False, False
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.connect((self.options.hostname, self.options.port))
-                http_listening = True
-            except (socket.error, ConnectionRefusedError):
-                pass
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.connect((self.options.hostname, self.grpc_port))
-                grpc_listening = True
-            except (socket.error, ConnectionRefusedError):
-                pass
+        """Check if HTTP and gRPC ports are listening.
+        
+        Returns:
+            Tuple[bool, bool]: (http_listening, grpc_listening)
+        """
+        http_listening = self.__is_port_listening(self.options.hostname, self.options.port)
+        grpc_listening = self.__is_port_listening(self.options.hostname, self.options.grpc_port)
         return (http_listening, grpc_listening)
+    
+    def __is_port_listening(self, hostname: str, port: int) -> bool:
+        """Check if a specific port is listening.
+        
+        Args:
+            hostname: The hostname to connect to
+            port: The port to check
+            
+        Returns:
+            bool: True if the port is listening, False otherwise
+        """
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.connect((hostname, port))
+                return True
+            except (socket.error, ConnectionRefusedError):
+                return False
 
     def start(self) -> None:
-        up = self.__is_listening()
-        if up[0] and up[1]:
-            raise WeaviateStartUpError(
-                f"Embedded DB did not start because processes are already listening on ports http:{self.options.port} and grpc:{self.grpc_port}"
-                f"use weaviate.connect_to_local(port={self.options.port}, grpc_port={self.options.grpc_port}) to connect to the existing instance"
-            )
-        elif up[0] and not up[1]:
-            raise WeaviateStartUpError(
-                f"Embedded DB did not start because a process is already listening on port http:{self.options.port}"
-                "look for another free port for the HTTP connection to you embedded instance"
-            )
-        elif up[1] and not up[0]:
-            raise WeaviateStartUpError(
-                f"Embedded DB did not start because a process is already listening on port grpc:{self.grpc_port}"
-                "look for another free port for the gRPC connection to your embedded instance"
-            )
+        """Start the embedded Weaviate instance."""
+        http_listening, grpc_listening = self.__is_listening()
+        
+        if self.__are_both_ports_listening(http_listening, grpc_listening):
+            self.__raise_both_ports_in_use_error()
+        elif self.__is_only_http_port_listening(http_listening, grpc_listening):
+            self.__raise_http_port_in_use_error()
+        elif self.__is_only_grpc_port_listening(http_listening, grpc_listening):
+            self.__raise_grpc_port_in_use_error()
+        
         super().start()
+    
+    def __are_both_ports_listening(self, http_listening: bool, grpc_listening: bool) -> bool:
+        """Check if both HTTP and gRPC ports are listening."""
+        return http_listening and grpc_listening
+    
+    def __is_only_http_port_listening(self, http_listening: bool, grpc_listening: bool) -> bool:
+        """Check if only the HTTP port is listening."""
+        return http_listening and not grpc_listening
+    
+    def __is_only_grpc_port_listening(self, http_listening: bool, grpc_listening: bool) -> bool:
+        """Check if only the gRPC port is listening."""
+        return grpc_listening and not http_listening
+    
+    def __raise_both_ports_in_use_error(self) -> None:
+        """Raise an error when both HTTP and gRPC ports are in use."""
+        raise WeaviateStartUpError(
+            f"Embedded DB did not start because processes are already listening on ports http:{self.options.port} and grpc:{self.options.grpc_port} "
+            f"use weaviate.connect_to_local(port={self.options.port}, grpc_port={self.options.grpc_port}) to connect to the existing instance"
+        )
+    
+    def __raise_http_port_in_use_error(self) -> None:
+        """Raise an error when only the HTTP port is in use."""
+        raise WeaviateStartUpError(
+            f"Embedded DB did not start because a process is already listening on port http:{self.options.port} "
+            "look for another free port for the HTTP connection to you embedded instance"
+        )
+    
+    def __raise_grpc_port_in_use_error(self) -> None:
+        """Raise an error when only the gRPC port is in use."""
+        raise WeaviateStartUpError(
+            f"Embedded DB did not start because a process is already listening on port grpc:{self.options.grpc_port} "
+            "look for another free port for the gRPC connection to your embedded instance"
+        )
